@@ -1,0 +1,11 @@
+# depslib dependency file v1.0
+1523263755 source:/home/pho/rtos/RTOS-Assessment-2/Prg_1/main.c
+	<pthread.h>
+	<stdio.h>
+	<stdlib.h>
+	<unistd.h>
+	<string.h>
+	<sys/types.h>
+	<semaphore.h>
+	<time.h>
+
