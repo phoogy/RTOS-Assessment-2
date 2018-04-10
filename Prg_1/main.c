@@ -31,10 +31,16 @@ int microsecondTimer;
 pthread_mutex_t sharedCharMutex;
 
 // Semaphores
-sem_t dataReady, dataProcessed;
+sem_t sem_threadA, sem_threadB;
+
+struct ThreadData{
+    int finished;
+    int dataCount;
+    char character;
+} threadData;
 
 // Thread A
-void *threadA()
+void *threadA(ThreadData *threadData)
 {
     // Declare Variables
     char ch;                        // Char variable used for handling data.
@@ -46,31 +52,42 @@ void *threadA()
     // Loop while not end of file
     while (!feof(file))
     {
+        sem_wait(&sem_threadA)
         ch = fgetc(file);           // Get next char.
         write(fd[1],&ch,1);         // Write to pipe.
+        sem_post(&sem_threadB);
     }
     return 0;
 }
 
 // Thread B
-void *threadB()
+void *threadB(ThreadData *threadData)
 {
     // Declare Variables
     char ch;
 
     // Loop
     while(1){                                   // Loop Forever.
+        sem_wait(&sem_threadB);
+
         read(fd[0],&ch,1);                      // Read from pipe.
-        sem_wait(&dataProcessed);               // Wait for semaphore.
         pthread_mutex_lock(&sharedCharMutex);   // Mutex lock the shared char.
         sharedChar = ch;                        // Set sharedChar.
         pthread_mutex_unlock(&sharedCharMutex); // Mutex unlock the shared char.
-        sem_post(&dataReady);                   // Post/Signal semaphore dataReady.
+        sem_post(&sem_threadC);                   // Post/Signal semaphore dataReady.
+
+        pthread_mutex_lock(&sharedThreadData);
+        if (threadData.finished == 1 && threadData.dataCount == 0)
+        {
+            break;
+        }
+
+
     }
 }
 
 // Thread C
-void *threadC()
+void *threadC(ThreadData *threadData)
 {
     // Declare Variables
     char endHeader[] = "end_header";    // String to look for to find end_header.
@@ -116,6 +133,12 @@ void *threadC()
 // Main
 int main(void)
 {
+
+    threadData.dataCount = 0;
+    threadData.finished = 0;
+
+
+
     // Initialise
     int startTime = clock() * 1000000 / CLOCKS_PER_SEC; // Initialise Timer
     pthread_mutex_init(&sharedCharMutex,NULL);  // Init Mutex sharedCharMutex.
