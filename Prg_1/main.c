@@ -395,21 +395,21 @@ int writeToSharedMemory(char sharedMemoryName[], char *data)
 		printf("Could not create shared memory region\n");
 	else
 	{
-		/* Make the shared memory region */
-		if (ftruncate(shm_fd, (size_t)1024) < 0)
-			printf("Could not create shared memory size\n");
+		/* Map the shared memory */
+		addr = (char*)mmap(NULL, (size_t)1024, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+		if (addr == MAP_FAILED)
+			printf("Could not create shared memory map\n");
 		else
 		{
-			/* Map the shared memory */
-			addr = (char*)mmap(NULL, (size_t)1024, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-			if (addr == MAP_FAILED)
-				printf("Could not create shared memory map\n");
-			else
+			/* Copy data to shared memory */
+			memcpy(addr,data,sizeof(&data));
+			
+			/* Remove mappings */
+			if(munmap((void *)addr, (size_t)1024) < 0)
 			{
-				/* Copy data to shared memory */
-				memcpy(addr,data,sizeof(&data));
-				return 1;
+				perror("munmap");
 			}
+			return 1;
 		}
 	}
 	return 0;
