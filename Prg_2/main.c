@@ -55,27 +55,33 @@ int main(int argc, char *argv[])
         printf("Could not create shared memory region\n");
     else
     {
-        /* Map the shared memory */
-		if(debug)
-			printf("Mapping the shared memory region\n");
-
-		addr = (char*)mmap(NULL, (size_t)1024, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-		if (addr == MAP_FAILED)
-			printf("Could not create shared memory map\n");
+		if (ftruncate(shm_fd, (size_t)1024) < 0) 
+      		printf("Could not create shared memory size\n");
 		else
 		{
-			/* Print data from shared memory to Console */
+			/* Map the shared memory */
 			if(debug)
-				printf("Printing Duration\n");
+				printf("Mapping the shared memory region\n");
 
-			printf("Duration: %s Microseconds\n", addr);
-			
-			/* Remove mappings */
-			if(munmap((void *)addr, (size_t)1024) < 0)
+			addr = (char*)mmap(NULL, (size_t)1024, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+			if (addr == MAP_FAILED)
+				printf("Could not create shared memory map\n");
+			else
 			{
-				perror("munmap");
+				/* Print data from shared memory to Console */
+				if(debug)
+					printf("Printing Duration\n");
+
+				printf("Duration: %s Microseconds\n", addr);
+				
+				/* Remove mappings */
+				if(munmap((void *)addr, (size_t)1024) < 0)
+				{
+					perror("munmap");
+				}
+				close(shm_fd);
+				return 1;
 			}
-			return 1;
 		}
     }
     return 0;
