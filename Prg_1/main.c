@@ -3,7 +3,7 @@
  * Project: Assignment 2 - Prg_1
  * Name: Phong Au
  * Student Number: 10692820
- * Compile Command: gcc -o Prg_1 Prg_1.c -lpthread -lrt -Wall
+ * Compile Command: gcc -o Prg_1 Prg_1.c -lpthread -lrt
  * Run Command : ./Prg_1
  */
 
@@ -18,435 +18,373 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/time.h>
 
 /* Defines */
-#define MESSLENGTH 127
+#define MESSLENGTH 1024
+#define DATA_FILE "data.txt"
+#define SRC_FILE "src.txt"
+#define END_HEADER "end_header"
+#define SHM_MESSLENGTH 1024
+#define SHM_NAME "shared"
 
 /* ThreadData Struct */
-struct ThreadData
+struct ThreadDataA
 {
-	char *collectFromPipe;					// Place to pass string from thread 2 to thread 3
-	int eof;								// End Of File Flag
-	int fd[2];								// The File Descriptor for the pipe
-	pthread_mutex_t eof_mutex, cfp_mutex;	// The mutex locks
-	sem_t write, read, justify;				// The semaphores
-	int debug;
+    sem_t *semWait;
+    sem_t *semPost;
+    int *eof;
+    pthread_mutex_t *eofMutex;
+	int *pipeWrite;
+	FILE *dataFile;
 };
 
-/* Threads & Functions */
-void *threadA(void *args);			        // Thread one
-void *threadB(void *args);					// Thread two
-void *threadC(void *args);					// Thread three
-void initialiseData(void *args);			// Function to initialise data
-void freeResources(void *args);				// Function to initialise data
-int eof(struct ThreadData *threadData);		// Get shared EOF flag in threadData
-int writeToSharedMemory(char sharedMemoryName[], char *data); // Get shared EOF flag in threadData
-int printSrc(void);							// Print src.txt to console
+struct ThreadDataB
+{
+    sem_t *semWait;
+    sem_t *semPost;
+    int *eof;
+    pthread_mutex_t *eofMutex;
+    pthread_mutex_t *sharedMutex;
+    char *shared;
+    int *pipeRead;
+};
+
+struct ThreadDataC
+{
+    sem_t *semWait;
+    sem_t *semPost;
+    int *eof;
+    pthread_mutex_t *eofMutex;
+    pthread_mutex_t *sharedMutex;
+	char *shared;
+    FILE *srcFile;
+};
+
+/* Function threadA - Reads data from the text file one line at a time and writes it to the pipe. */
+void *threadA(struct ThreadDataA *data)
+{
+
+    /* Declare local variables */
+    char line[MESSLENGTH];
+
+    /* Loop*/
+    while(1)
+    {
+        /* Wait and check eof */
+        sem_wait(data->semWait);
+        pthread_mutex_lock(data->eofMutex);
+        if(*data->eof)
+		{
+            pthread_mutex_unlock(data->eofMutex);
+            break;
+		}
+		pthread_mutex_unlock(data->eofMutex);
+
+        /* Read line from file and break or write to pipe */
+        if(fgets(line,sizeof line, data->dataFile) == NULL)
+            break;
+        write(*data->pipeWrite, line, strlen(line));
+
+        /* post */
+        sem_post(data->semPost);
+    }
+	return 0;
+}
+
+/* Function threadB - Reads data from the pipe and passes it to threadC. */
+void *threadB(struct ThreadDataB *data)
+{
+    /* Declare local variables */
+    int n;
+
+	/* Loop*/
+	while(1)
+	{
+        /* Wait and check eof */
+	  	sem_wait(data->semWait);
+		pthread_mutex_lock(data->eofMutex);
+		if(*data->eof)
+		{
+            pthread_mutex_unlock(data->eofMutex);
+            break;
+		}
+		pthread_mutex_unlock(data->eofMutex);
+
+		/* Read Data from pipe, write to shared */
+		pthread_mutex_lock(data->sharedMutex);
+		n = read(*data->pipeRead, data->shared, MESSLENGTH);
+		data->shared[n] = '\0'; 			// Null Character Terminates string.
+		pthread_mutex_unlock(data->sharedMutex);
+
+        /* Post */
+		sem_post(data->semPost);
+	}
+	return 0;
+}
 
 /*
- * Function main
- * <summary>The main program.</summary>
- * <params></params>
- * <returns></returns>
+ * Function threadC - Reads Data from threadB, justifies whether it is header or content and stores/discards the data.
  */
-int main(int argc, char *argv[])
+void *threadC(struct ThreadDataC *data)
 {
-	/* Clock/Timer */
-	int startTime = clock() * 1000000 / CLOCKS_PER_SEC; // Start Clock Time
+	/* Declare variables to be used*/
+	int endHeaderFound = 0;
 
-    /* Declare threadData*/
-	struct ThreadData threadData;
-
-	/* Turn off debug */
-    threadData.debug = 0;
-
-	/* Process args */
-	if(argc > 1)
-	{
-        if (strcmp(argv[1],"-debug") == 0)
-            threadData.debug = 1;
-        else
+	/* Loop while not end of file */
+    while(1)
+    {
+        /* Wait and check eof */
+        sem_wait(data->semWait);
+        pthread_mutex_lock(data->eofMutex);
+        if(*data->eof)
         {
-            printf("Commmands\n[-debug] Outputs process to console.\n");
-            exit(EXIT_FAILURE);
+            pthread_mutex_unlock(data->eofMutex);
+            break;
         }
-	}
+        pthread_mutex_unlock(data->eofMutex);
 
-    /* Initialise threadData */
-    initialiseData(&threadData);	// Call InitialiseData
-    if(threadData.debug)
-        printf("Initialised Data.\n");
+        /* Read data from shared and write to file if end header found */
+        pthread_mutex_lock(data->sharedMutex);
+        if(endHeaderFound)
+        {
+            if(fputs(data->shared,data->srcFile) == EOF)
+            {
+                printf("Failed to write to file.\n");
+                pthread_mutex_lock(data->eofMutex);
+                *data->eof = 1;
+                pthread_mutex_unlock(data->eofMutex);
+            }
+        }
+        else if (strncmp(data->shared, END_HEADER, strlen(END_HEADER)) == 0)
+            endHeaderFound = 1;
+        pthread_mutex_unlock(data->sharedMutex);
 
-	/* Thread Id Declarations */
-	pthread_t tidA,tidB,tidC;	   // Thread IDs
-
-	/* Thread Creation */
-	if(pthread_create(&tidA, NULL, threadA, &threadData) != 0)
-    {
-        perror("pthread_create A");
-        freeResources(&threadData);
-    	exit(3);
+         /* Post */
+        sem_post(data->semPost);
     }
-	if(pthread_create(&tidB, NULL, threadB, &threadData) != 0)
-    {
-        perror("pthread_create B");
-        freeResources(&threadData);
-    	exit(4);
-    }
-	if(pthread_create(&tidC, NULL, threadC, &threadData) != 0)
-    {
-        perror("pthread_create C");
-        freeResources(&threadData);
-    	exit(5);
-    }
-    if(threadData.debug)
-        printf("Created threads.\n");
-
-	/* NOTE Passing NULL to the thread atttribute will make pthread_create use
-	 * the default attributes which is the same as if you were to use
-	 * pthread_attr_init() for a pthread_attr_t object
-	 */
-
-	/* Thread Wait */
-	if(threadData.debug)
-        printf("Waiting for threads.\n");
-
-	pthread_join(tidA,NULL);	// Wait for Thread one to finish
-	pthread_join(tidB,NULL);	// Wait for Thread two to finish
-	pthread_join(tidC,NULL);	// Wait for Thread three to finish
-
-    if(threadData.debug)
-        printf("Waiting for threads finished.\n");
-
-	/* Free Resources */
-	freeResources(&threadData);
-	if(threadData.debug)
-        printf("Resources freed.\n");
-
-	/* Clock/Timer */
-	char time[1024];	// Declare time variable with 1024 because thats the created size of the shared memory
-	sprintf(time, "%d", (int)((clock() * 1000000 / CLOCKS_PER_SEC) - startTime));	// Calculate Time
-    if(threadData.debug)
-        printf("Time Calculated.\n");
-
-	/* Shared memory */
-	if(!writeToSharedMemory("shared",time))
-		printf("Failed to wrote to shared memory\n");
-    else if(threadData.debug)
-        printf("Written time to shared memory.\n");
-
-    /* Print time and src*/
-    if(threadData.debug)
-    {
-        printf("Duration: %s Microseconds\n",time);	// Print Duration to terminal to compare with Prg2
-        if(!printSrc())
-            printf("Failed to print src file");
-    }
-    return 0;
-}
-
-/*
- * Function threadA
- * <summary>Reads data from the text file one line at a time and writes it to the pipe.</summary>
- * <params>void *args = reference to the threadData</params>
- * <returns></returns>
- */
-void *threadA(void *args)
-{
-	/* Declare variables to be used*/
-	struct ThreadData *threadData = args;
-	FILE *dataFile;
-
-	/* Open File */
-	if((dataFile = fopen("data.txt", "r")))
-	{
-		/* Declare char array to store line from text file */
-		char line[MESSLENGTH];
-
-		/* Loop while not end of file */
-		while(fgets(line,sizeof line, dataFile) != NULL)
-		{
-			sem_wait(&(threadData->write));					// Wait for semaphore
-			write(threadData->fd[1], line, strlen(line));	// Write line to pipe
-			sem_post(&(threadData->read));					// Signal threadB
-		}
-
-		/* Close dataFile */
-		fclose(dataFile);
-
-		/* Set eof to 1 to signal other threads that dataFile has finished */
-		pthread_mutex_lock(&(threadData->eof_mutex));		// Mutex lock
-		threadData->eof = 1;								// Set eof to 1
-		pthread_mutex_unlock(&(threadData->eof_mutex));		// Mutex unlock
-	}else
-	{
-		/* Error opening file setting eof to 2 so other threads don't wait for data */
-		perror("data.txt");                             // Print error
-		pthread_mutex_lock(&(threadData->eof_mutex));	// Mutex lock
-		threadData->eof = 2;							// Set eof to 2
-		pthread_mutex_unlock(&(threadData->eof_mutex));	// Mutex unlock
-	}
-
-	/* Signal threadB one last time so threadB can end */
-	sem_post(&(threadData->read));
 	return 0;
 }
 
 /*
- * Function threadB
- * <summary>Reads data from the pipe and passes it to threadC.</summary>
- * <params>void *args = reference to the threadData</params>
- * <returns></returns>
- */
-void *threadB(void *args)
-{
-	/* Declare variables to be used*/
-	struct ThreadData *threadData = args;
-	int n;
-
-	/* Loop while not end of file */
-	while(eof(threadData) == 0)
-	{
-		/* Wait for signal*/
-	  	sem_wait(&(threadData->read));
-
-		/* If dataFile opening in threadA failed*/
-		if(eof(threadData) == 2)
-		{
-			sem_post(&(threadData->justify));	// Signal threadC
-			pthread_exit(NULL);					// Exit Thread
-		}
-
-		/* Read Data from pipe */
-		pthread_mutex_lock(&(threadData->cfp_mutex));
-		n = read(threadData->fd[0], threadData->collectFromPipe, MESSLENGTH);
-		threadData->collectFromPipe[n] = '\0'; 			// Null Character Terminates string.
-		pthread_mutex_unlock(&(threadData->cfp_mutex));
-
-		/* If end of file */
-		if(eof(threadData) == 1)
-		{
-			sem_post(&(threadData->justify));	// Signal threadC
-			pthread_exit(NULL);					// Exit Thread
-		}
-
-		/* Signal threadC */
-		sem_post(&(threadData->justify));
-	}
-	return 0;
-}
-
-/*
- * Function threadC
- * <summary>Reads Data from threadB, justifies whether it is header or content and stores/discards the data.</summary>
- * <params>void *args = reference to the threadData</params>
- * <returns></returns>
- */
-void *threadC(void *args)
-{
-	/* Declare variables to be used*/
-	struct ThreadData *threadData = args;
-	FILE *src; // File Variable declaration
-	int end_header = 0;
-
-	/* Open/Create File to write to*/
-	src = fopen("src.txt", "w");
-
-	/* Loop while not end of file */
-	while(eof(threadData) == 0)
-	{
-		/* Wait for signal*/
-		sem_wait(&(threadData->justify));
-
-		/* If dataFile opening in threadA failed*/
-		if(eof(threadData) == 2)
-		{
-			fclose(src);			// Close src file
-			pthread_exit(NULL);		// Exit Thread
-		}
-
-		/* Process Data from thread B */
-		if(end_header)								// If end header has been found
-			fputs(threadData->collectFromPipe,src);	// Write data to src file
-		else if (strcmp(threadData->collectFromPipe,"end_header\n") == 0) // Look for end header
-			end_header = 1;							// Set end header to found/true/1
-
-		/* If end of file */
-		if(eof(threadData) == 1)
-		{
-			fclose(src);			// Close src file
-			pthread_exit(NULL);		// Exit Thread
-		}
-
-		/* Signal threadA */
-	  	sem_post(&(threadData->write));
-	}
-
-	/* Close src file */
-	fclose(src);
-	return 0;
-}
-
-/*
- * Function initialiseData
- * <summary>Initialises resources, mutexes and sempahores.</summary>
- * <params>void *args = reference to the threadData</params>
- * <returns></returns>
- */
-void initialiseData(void *args) {
-
-	/* Declare variables to be used*/
-	struct ThreadData *threadData = args;
-
-	/* Allocate memory for collectFromPipe */
-	threadData->collectFromPipe = malloc(MESSLENGTH*sizeof(int));
-	if (threadData->collectFromPipe == NULL)
-	{
-        perror("collectFromPipe");
-        exit(1);
-	}
-
-	/* Initialise mutexes */
-	pthread_mutex_init(&(threadData->eof_mutex), NULL); // End Of File mutex.
-	pthread_mutex_init(&(threadData->cfp_mutex), NULL); // Collect From File mutex.
-
-	/* Set end of file flag to false/0 */
-	pthread_mutex_lock(&(threadData->eof_mutex));
-	threadData->eof = 0;
-	pthread_mutex_unlock(&(threadData->eof_mutex));
-
-	/* Initialise the semaphores */
-	sem_init(&(threadData->write), 0, 0);   // Write/Thread A semaphore
-	sem_init(&(threadData->read), 0, 0);	// Read/Thread B semaphore
-	sem_init(&(threadData->justify), 0, 0); // Justify/Thread C semaphore
-	sem_post(&(threadData->write));			// Add a token to write semaphore
-
-	/* Create Pipe */
-	if(pipe(threadData->fd)<0)
-    {
-        perror("fd");
-        exit(2);
-	}
-}
-
-/*
- * Function freeResources
- * <summary>Frees up allocated resources and destroys mutexes and sempahores.</summary>
- * <params>void *args = reference to the threadData</params>
- * <returns></returns>
- */
-void freeResources(void *args)
-{
-	/* Declare variables to be used*/
-	struct ThreadData *threadData = args;
-
-	/* Free Resources */
-	free(threadData->collectFromPipe);					// Free pipe
-	pthread_mutex_destroy(&(threadData->eof_mutex));	// Destroy eof mutex
-	pthread_mutex_destroy(&(threadData->cfp_mutex));	// Destroy cfp mutex
-	sem_destroy(&(threadData->write));					// Destroy write semaphore
-	sem_destroy(&(threadData->read));					// Destroy read semaphore
-	sem_destroy(&(threadData->justify));				// Destroy justify semaphore
-}
-
-/*
- * Function eof
- * <summary>Allows safe access to the eof flag as this function implements mutex.</summary>
- * <params>struct ThreadData *threadData = reference to the threadData object</params>
- * <returns>int 0 = not end of file, 1 = end of file, 2 = error opening file, -1 = unknown error.</returns>
- */
-int eof(struct ThreadData *threadData)
-{
-	/* Mutex Lock then Unlock */
-	pthread_mutex_lock(&(threadData->eof_mutex));
-	if(threadData->eof == 0)
-	{
-		pthread_mutex_unlock(&(threadData->eof_mutex));
-		return 0;
-	}else if (threadData->eof == 1)
-	{
-		pthread_mutex_unlock(&(threadData->eof_mutex));
-		return 1;
-	}else if(threadData->eof == 2)
-	{
-		pthread_mutex_unlock(&(threadData->eof_mutex));
-		return 2;
-	}else
-	{
-		pthread_mutex_unlock(&(threadData->eof_mutex));
-		return -1;
-	}
-}
-
-/*
- * Function writeToSharedMemory
- * <summary>Creates or opens shared memory and writes to it.</summary>
- * <params>char sharedMemoryName[] = the name of the shared memory, void *data = a reference to the data to be copied to shared memory</params>
- * <returns>int 1 = success, 0 = failed.</returns>
+ * Function writeToSharedMemory - Creates or opens shared memory and writes to it.
  */
 int writeToSharedMemory(char sharedMemoryName[], char *data)
 {
-	/* Declare variables to be used */
-	int shm_fd;		// Shared memory file descriptor
-	char *addr;		// Shared memory address
+    /* Declare variables to be used */
+	int shm_fd;
+	char *addr;
 
 	/* Create shared memory region */
 	if ((shm_fd = shm_open(sharedMemoryName, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR))< 0)
 		printf("Could not create shared memory region\n");
 	else
 	{
-		/* Make the shared memory region */ 
-    	if (ftruncate(shm_fd, (size_t)1024) < 0) 
+
+		/* Make the shared memory region */
+    	if (ftruncate(shm_fd, (size_t)SHM_MESSLENGTH) < 0)
       		printf("Could not create shared memory size\n");
 		else
 		{
+
 			/* Map the shared memory */
-			addr = (char*)mmap(NULL, (size_t)1024, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+			addr = (char*)mmap(NULL, (size_t)SHM_MESSLENGTH, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
 			if (addr == MAP_FAILED)
 				printf("Could not create shared memory map\n");
 			else
 			{
+
 				/* Copy data to shared memory */
-				memcpy(addr,data,sizeof(&data));
-			
+                sprintf(addr, "%s", data);
+
 				/* Remove mappings */
-				if(munmap((void *)addr, (size_t)1024) < 0)
+				if(munmap((void *)addr, (size_t)SHM_MESSLENGTH) < 0)
 				{
-					perror("munmap");
+					printf("Could not remove mappings\n");
 				}
-				//close(shm_fd);
 				return 1;
-			}			
+			}
 		}
 	}
 	return 0;
 }
 
-/*
- * Function printSrc
- * <summary>Attempts to print the contents the src.txt file.</summary>
- * <params></params>
- * <returns>int 1 = success, 0 = failed.</return>
- */
-int printSrc(void)
+/* Main Function*/
+int main(int argc, char *argv[])
 {
-	/* Declare variables to be used */
-	FILE *srctest;
-	char line[MESSLENGTH];	// Char array to store line from text file
+	/* Clock/Timer */
+	clock_t startTime = clock(); // Start Clock Time
+	clock_t endTime, duration;
 
-	/* Open File */
-	if((srctest = fopen("src.txt", "r")))
-	{
-		/* Print src.txt */
-		printf("\nsrc.txt\n");
+    /* Declare variables*/
+    int fd[2], eof;
+    char *shared;
+    FILE *dataFile, *srcFile;
+    sem_t write, read, justify;
+    pthread_mutex_t eofMutex, sharedMutex;
 
-		/* Write all lines from file to console */
-		while(fgets(line,sizeof line, srctest) != NULL)	// While not end of file
-			printf("%s",line);
+    /* Create Pipe */
+    if (pipe(fd) < 0)
+        printf("Failed to create pipe.\n");
+    else
+    {
+        /* Allocate memory for shared data betwen threadB and threadC*/
+        shared = malloc(MESSLENGTH * sizeof(int));
+        if (shared == NULL)
+            printf("Failed to allocate memory for shared.\n");
+        else
+        {
+            /* Initialse eofMutex */
+            if (pthread_mutex_init(&eofMutex, NULL) != 0)
+                printf("Failed to initialise eofMutex.\n");
+            else
+            {
+                /* Initialse sharedMutex */
+                if (pthread_mutex_init(&sharedMutex, NULL) != 0)
+                    printf("Failed to initialise sharedMutex.\n");
+                else
+                {
+                    /* Initialise semaphore write */
+                    if (sem_init(&write, 0, 0) < 0)
+                        printf("Failed to initialise semaphore write.\n");
+                    else
+                    {
+                        /* Initialise semaphore read */
+                        if (sem_init(&read, 0, 0) < 0)
+                            printf("Failed to initialise semaphore read.\n");
+                        else
+                        {
+                            /* Initialise semaphore justify */
+                            if (sem_init(&justify, 0, 0) < 0)
+                                printf("Failed to initialise semaphore justify.\n");
+                            else
+                            {
+                                /* Open data file for reading */
+                                dataFile = fopen(DATA_FILE, "r");
 
-		/* Close file */
-		fclose(srctest);
-		return 1;
-	}
-	return 0;
+                                if (dataFile == NULL)
+                                    printf("Failed to open %s for reading.\n", DATA_FILE);
+                                else
+                                {
+                                    /* Open src file for writing */
+                                    srcFile = fopen(SRC_FILE, "w");
+                                    if (srcFile == NULL)
+                                        printf("Failed to open %s for writing.\n", SRC_FILE);
+                                    else
+                                    {
+
+                                        /* Declare threadData*/
+                                        struct ThreadDataA dataA = {&write, &read, &eof, &eofMutex, &fd[1], dataFile};
+                                        struct ThreadDataB dataB = {&read, &justify, &eof, &eofMutex, &sharedMutex, shared,  &fd[0]};
+                                        struct ThreadDataC dataC = {&justify, &write, &eof, &eofMutex, &sharedMutex, shared, srcFile};
+
+                                        /* Declare Thread Id */
+                                        pthread_t tidA,tidB,tidC;
+
+                                        eof = 1;
+
+                                        /* Create ThreadA */
+                                        if(pthread_create(&tidA, NULL, (void *)threadA, &dataA) != 0)
+                                            printf("Failed to create thread A\n");
+                                        else
+                                        {
+                                            /* Create ThreadB */
+                                            if(pthread_create(&tidB, NULL, (void *)threadB, &dataB) != 0)
+                                            {
+                                                printf("Failed to create thread B\n");
+                                                sem_post(&write);
+                                            }
+                                            else
+                                            {
+                                                /* Create ThreadC */
+                                                if(pthread_create(&tidC, NULL, (void *)threadC, &dataC) != 0)
+                                                {
+                                                    printf("Failed to create thread C\n");
+                                                    sem_post(&write);
+                                                    sem_post(&read);
+                                                }
+
+                                                else
+                                                {
+                                                    /* Start */
+                                                    pthread_mutex_lock(&eofMutex);
+                                                    eof = 0;
+                                                    pthread_mutex_unlock(&eofMutex);
+
+                                                    sem_post(&write);
+
+                                                    /* Finished */
+                                                    pthread_join(tidA,NULL);
+                                                    pthread_mutex_lock(&eofMutex);
+                                                    eof = 1;
+                                                    pthread_mutex_unlock(&eofMutex);
+                                                    sem_post(&read);
+                                                    sem_post(&justify);
+                                                    pthread_join(tidB,NULL);
+                                                    pthread_join(tidC,NULL);
+                                                }
+                                            }
+                                        }
+
+                                        /* Close src file */
+                                        if(fclose(srcFile) != 0)
+                                            printf("Failed to close %s.\n", SRC_FILE);
+                                    }
+
+                                    /* Close data file*/
+                                    if(fclose(dataFile) != 0)
+                                        printf("Failed to close %s.\n", DATA_FILE);
+                                }
+
+                                /* Destroy semaphore justify */
+                                if(sem_destroy(&justify) < 0)
+                                    printf("Failed to destroy semaphore justify.\n");
+                            }
+
+                            /* Destroy semaphore read */
+                            if(sem_destroy(&read) < 0)
+                                printf("Failed to destroy semaphore read.\n");
+                        }
+
+                        /* Destroy semaphore write */
+                        if(sem_destroy(&write) < 0)
+                            printf("Failed to destroy semaphore write.\n");
+                    }
+
+                    /* Destroy mutex sharedMutex */
+                    if(pthread_mutex_destroy(&sharedMutex) != 0)
+                        printf("Failed to destroy sharedMutex.\n");
+                }
+
+                /* Destroy mutex eofMutex */
+                if(pthread_mutex_destroy(&eofMutex) != 0)
+                    printf("Failed to destroy eofMutex.\n");
+            }
+
+            /* Free shared memory*/
+            free(shared);
+        }
+
+        /* Close Pipe */
+        if(close(fd[0])<0)
+            perror("close(fd[0])");
+        if(close(fd[1])<0)
+            perror("close(fd[1])");
+    }
+
+	/* Calculate Duration */
+	endTime = clock();
+	duration = (endTime-startTime) * 1000000 / CLOCKS_PER_SEC ;
+	char durationAsString[SHM_MESSLENGTH];
+	sprintf(durationAsString, "%ld", duration);
+
+	/* Write to shared memory */
+	if(!writeToSharedMemory(SHM_NAME, durationAsString))
+		printf("Failed to wrote to shared memory\n");
+
+    /* Test */
+    //printf("Duration: %ld Microseconds\n",duration);
+    //printf("Duration: %s Microseconds\n",durationAsString);
+
+    return 0;
 }

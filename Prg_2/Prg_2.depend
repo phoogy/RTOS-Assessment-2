@@ -8,3 +8,12 @@
 	<sys/stat.h>
 	<fcntl.h>
 
+1525095280 source:/home/pho/RTOS-Assessment-2/Prg_2/main.c
+	<stdlib.h>
+	<stdio.h>
+	<unistd.h>
+	<string.h>
+	<sys/mman.h>
+	<sys/stat.h>
+	<fcntl.h>
+

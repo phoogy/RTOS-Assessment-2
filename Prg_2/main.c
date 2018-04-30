@@ -3,7 +3,7 @@
  * Project: Assignment 2 - Prg_2
  * Name: Phong Au
  * Student Number: 10692820
- * Compile Command: gcc -o Prg_2 Prg_2.c -lpthread -lrt -Wall
+ * Compile Command: gcc -o Prg_2 Prg_2.c -lrt
  * Run Command : ./Prg_2
  */
 
@@ -16,73 +16,59 @@
 #include <sys/stat.h> /* For mode constants */
 #include <fcntl.h> /* For O_* constants */
 
+
 /* Defines */
-#define MESSLENGTH 1024
+#define SHM_MESSLENGTH 1024
+#define SHM_NAME "shared"
 
-/*
- * Function main
- * <summary>Reads from shared memory and writes to console.</summary>
- * <params></params>
- * <returns></returns>
- */
-int main(int argc, char *argv[])
+int readFromSharedMemory(char *dataPtr, char sharedMemoryName[])
 {
-    /* Process args */
-    int debug = 0;
-	if(argc > 1)
-	{
-        if (strcmp(argv[1],"-debug") == 0)
-            debug = 1;
-        else
-        {
-            printf("Commmands\n[-debug] Outputs process to console.\n");
-            exit(EXIT_FAILURE);
-        }
-	}
-
 	/* Declare variables to be used */
-	if(debug)
-        printf("Declaring Variables\n");
-
-    int shm_fd; // Shared memory file descriptor
-    char *addr;  // Shaared memory address
+	int shm_fd;
+	char *addr;
 
 	/* Create shared memory region */
-	if(debug)
-        printf("Creating shared memory region\n");
+	if ((shm_fd = shm_open(sharedMemoryName, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR))< 0)
+		printf("Could not create shared memory region\n");
+	else
+	{
 
-    if ((shm_fd = shm_open("shared", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR))< 0)
-        printf("Could not create shared memory region\n");
-    else
-    {
-		if (ftruncate(shm_fd, (size_t)1024) < 0) 
+		/* Make the shared memory region */
+    	if (ftruncate(shm_fd, (size_t)SHM_MESSLENGTH) < 0)
       		printf("Could not create shared memory size\n");
 		else
 		{
-			/* Map the shared memory */
-			if(debug)
-				printf("Mapping the shared memory region\n");
 
-			addr = (char*)mmap(NULL, (size_t)1024, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+			/* Map the shared memory */
+			addr = (char*)mmap(NULL, (size_t)SHM_MESSLENGTH, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
 			if (addr == MAP_FAILED)
 				printf("Could not create shared memory map\n");
 			else
 			{
-				/* Print data from shared memory to Console */
-				if(debug)
-					printf("Printing Duration\n");
 
-				printf("Duration: %s Microseconds\n", addr);
-				
+				/* Copy shared memory data to dataPtr */
+                sprintf(dataPtr, "%s", addr);
+
 				/* Remove mappings */
-				if(munmap((void *)addr, (size_t)1024) < 0)
+				if(munmap((void *)addr, (size_t)SHM_MESSLENGTH) < 0)
 				{
-					perror("munmap");
+					printf("Could not remove mappings\n");
 				}
-				close(shm_fd);
 				return 1;
 			}
 		}
-    }
+	}
+	return 0;
+}
+/*
+ * Function main - Reads from shared memory and writes to console.
+ */
+int main(int argc, char *argv[])
+{
+    char data[SHM_MESSLENGTH];
+    if(readFromSharedMemory(&data[0], SHM_NAME))
+        printf("Duraton: %s Microseconds\n",data);
+    else
+        printf("Failed to read from shared memory.\n");
     return 0;
 }
