@@ -11,16 +11,13 @@
 	<sys/stat.h>
 	<fcntl.h>
 
-1525093630 source:/home/pho/RTOS-Assessment-2/Prg_1/main.c
+1525096609 source:/home/pho/RTOS-Assessment-2/Prg_1/main.c
 	<stdlib.h>
 	<stdio.h>
 	<pthread.h>
 	<semaphore.h>
 	<unistd.h>
 	<string.h>
-	<time.h>
 	<sys/mman.h>
-	<sys/stat.h>
 	<fcntl.h>
-	<sys/time.h>
 
