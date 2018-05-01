@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
 {
     char data[SHM_MESSLENGTH];
     if(readFromSharedMemory(&data[0], SHM_NAME))
-        printf("Duraton: %s Microseconds\n",data);
+        printf("%s\n",data);
     else
         printf("Failed to read from shared memory.\n");
     return 0;

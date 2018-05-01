@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <time.h>
 
 /* Defines */
 #define MESSLENGTH 1024
@@ -199,19 +200,23 @@ int writeToSharedMemory(char sharedMemoryName[], char *data)
 				{
 					printf("Could not remove mappings\n");
 				}
+				close(shm_fd);
 				return 1;
 			}
 		}
+		close(shm_fd);
 	}
+
 	return 0;
 }
 
 /* Main Function*/
 int main(int argc, char *argv[])
 {
+
 	/* Clock/Timer */
-	clock_t startTime = clock(); // Start Clock Time
-	clock_t endTime, duration;
+    struct timespec start, end;
+    clock_gettime(CLOCK_REALTIME, &start);
 
     /* Declare variables*/
     int fd[2], eof;
@@ -370,18 +375,18 @@ int main(int argc, char *argv[])
     }
 
 	/* Calculate Duration */
-	endTime = clock();
-	duration = (endTime-startTime) * 1000000 / CLOCKS_PER_SEC ;
+	clock_gettime(CLOCK_REALTIME, &end);
+	int duration = (int)((end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec));
 	char durationAsString[SHM_MESSLENGTH];
-	sprintf(durationAsString, "%ld", duration);
+	sprintf(durationAsString, "Duration: %d Nanoseconds", duration);
 
 	/* Write to shared memory */
 	if(!writeToSharedMemory(SHM_NAME, durationAsString))
-		printf("Failed to wrote to shared memory\n");
+		printf("Failed to write to shared memory\n");
 
     /* Test */
-    //printf("Duration: %ld Microseconds\n",duration);
-    //printf("Duration: %s Microseconds\n",durationAsString);
+    //printf("Duration: %d Nanoseconds\n",duration);
+    //printf("%s",durationAsString);
 
     return 0;
 }
